@@ -1,6 +1,7 @@
 import type { ParsedMethod, SwaggerLayerConfig } from "../types.js";
 import {
   cleanInterfaceImports,
+  formatDocComment,
   GENERATED_HEADER,
   toCamelCase,
   toEnumTypeName,
@@ -169,7 +170,7 @@ function renderApiFunction(m: ParsedMethod): string {
       ? `{ ${m.pathParams.map((p) => `${JSON.stringify(p.rawName)}: ${p.name}`).join(", ")} }`
       : "undefined";
 
-  let code = m.summary ? `/** ${m.summary} */\n` : "";
+  let code = formatDocComment(m.summary);
   code += `export async function ${m.fnName}(${paramsList.join(", ")}): Promise<${m.returnType}> {\n`;
   code += `  return ${m.httpMethod}<${m.returnType}, ${ERROR_RESPONSE_TYPE}>({\n`;
   code += `    path: ${JSON.stringify(m.path)},\n`;

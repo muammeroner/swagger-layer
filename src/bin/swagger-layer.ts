@@ -24,6 +24,7 @@ Options:
   --api-version <VER>        Override default API version header (e.g. 1.0)
   --http-client <PATH>       HTTP client import path used in generated api.ts (e.g. "../https.ts" or "@/lib/https")
   -e, --exclude <A,B>        Comma-separated tags/modules to exclude
+  --enum-style <STYLE>       Enum output style: numeric (default), string, or union
   -n, --name <NAME>          Subdomain/service name for swaggerUrlTemplate
   -h, --help                 Display this help message
   -v, --version              Display package version`;

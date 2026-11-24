@@ -31,7 +31,7 @@
 - **Bring Your Own HTTP Client:** Does not generate or lock you into a bundled HTTP client. Configure `"httpClient"` (e.g. `"../https.ts"` or `"@/lib/https"`) inside the `"swaggerLayer"` object in `config.json`, and all generated `api.ts` files will import `get`, `post`, `put`, `patch`, and `del` directly from your path.
 - **Layered Architecture:** Groups endpoints by OpenAPI tag into dedicated module directories with clear separation of concerns: `api.ts` $\rightarrow$ `repository.ts` $\rightarrow$ `service.ts`.
 - **Unified Type Safety:**
-  - `enums.ts`: All OpenAPI enum schemas generated as numeric TypeScript enums starting from `1` (`EUserRole`, etc.).
+  - `enums.ts`: All OpenAPI enum schemas generated as TypeScript enums (`EUserRole`, etc.) — numbered from `1` by default, or keeping their wire values / as union types via [`enumStyle`](#enum-styles-enumstyle).
   - `types.ts`: All DTO and response interfaces (`UserDto`, `CreateUserRequest`, etc.), `RequestConfig`, `HttpRequestArgs`, and `ApiErrorResponse` in a single file.
   - Inline query parameter types directly on method signatures (`query?: { page?: number; role?: "Admin" | "Member" | "Guest" }`).
 - **OpenAPI 3.x & Swagger 2.0 Support:** Seamlessly parses both `components.schemas` / `requestBody` (OpenAPI 3) and `definitions` / `in: "body"` (Swagger 2).
@@ -109,6 +109,19 @@ When `swagger-layer` runs, it reads the `"swaggerLayer"` object from `config.jso
 | **`input`** | `string` | `"./swagger.json"` | Local file path (`./swagger.json`) **or** remote URL (`https://.../swagger.json`) of the OpenAPI/Swagger JSON document. |
 | **`httpClient`** | `string` | `"../https"` | Import path for your HTTP client module used inside generated `<module>/api.ts` files (e.g. `"../https.ts"`, `"../https"`, or `"@/lib/https"`). |
 | **`excludedModules`** | `string[]` | `[]` | List of OpenAPI tags/modules to exclude from code generation (e.g. `["health", "internal"]`). |
+| **`enumStyle`** | `"numeric"` \| `"string"` \| `"union"` | `"numeric"` | How enum schemas are emitted in `enums.ts`. See [Enum Styles](#enum-styles-enumstyle). |
+
+### Enum Styles (`enumStyle`)
+
+Given `"UserRole": { "type": "string", "enum": ["Admin", "Member"] }`:
+
+| Style | Output | Use when |
+| :--- | :--- | :--- |
+| `numeric` (default) | `export enum EUserRole { Admin = 1, Member }` | Your backend sends enums as integers starting from `1`. |
+| `string` | `export enum EUserRole { Admin = "Admin", Member = "Member" }` | Your backend sends enums as strings (e.g. .NET `JsonStringEnumConverter`). |
+| `union` | `export type EUserRole = "Admin" \| "Member";` | You prefer plain literal types with no runtime code. |
+
+Integer enums (`"type": "integer"`) always keep their real values (e.g. `Value0 = 0`). Member names are taken from `x-enumNames` (NSwag) or `x-enum-varnames` (openapi-generator) when present, so `{ "enum": [1, 5], "x-enumNames": ["Low", "High"] }` becomes `enum ELevel { Low = 1, High = 5 }`.
 
 ### Example: Generating from a Remote Swagger URL
 
@@ -164,6 +177,7 @@ npx swagger-layer \
 | `--api-version <VER>` | - | Override default `api-version` header value |
 | `--http-client <PATH>` | - | Specify a custom HTTP client import path |
 | `--exclude <A,B>` | `-e` | Comma-separated list of modules/tags to exclude |
+| `--enum-style <STYLE>` | - | Override `enumStyle` (`numeric`, `string`, or `union`) |
 | `--help` | `-h` | Show help message |
 | `--version` | `-v` | Show package version |
 

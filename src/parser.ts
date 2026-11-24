@@ -14,6 +14,7 @@ import type {
 } from "./types.js";
 import {
   cleanOperationId,
+  formatLiteral,
   formatPropertyKey,
   isModuleExcluded,
   refToTypeName,
@@ -73,7 +74,7 @@ export function extractSchemas(doc: OpenApiDocument): Record<string, OpenApiSche
 }
 
 function formatEnumUnion(values: (string | number)[]): string {
-  return values.map((v) => (typeof v === "string" ? `"${v}"` : String(v))).join(" | ");
+  return values.map(formatLiteral).join(" | ");
 }
 
 /** Wraps compound types in parentheses so they can be suffixed with `[]`. */

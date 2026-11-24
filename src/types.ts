@@ -1,3 +1,13 @@
+/**
+ * How OpenAPI enum schemas are emitted in `enums.ts`:
+ * - `numeric`: TypeScript enum numbered from 1 (`Admin = 1, Member, ...`); integer enums keep their real values
+ * - `string`: TypeScript enum that keeps the wire values (`Admin = "Admin"`)
+ * - `union`: string/number literal union type (`type EUserRole = "Admin" | "Member"`)
+ */
+export type EnumStyle = "numeric" | "string" | "union";
+
+export const ENUM_STYLES: readonly EnumStyle[] = ["numeric", "string", "union"];
+
 export interface SwaggerLayerConfig {
   /** Base URL for API calls (e.g. "https://api.example.com" or "${process.env.NEXT_PUBLIC_DEFAULT_API_URL}") */
   baseUrl: string;
@@ -19,6 +29,8 @@ export interface SwaggerLayerConfig {
   swaggerUrlTemplate: string;
   /** Default subdomain/service name for `swaggerUrlTemplate` */
   defaultName: string;
+  /** How enum schemas are emitted (default: "numeric") */
+  enumStyle: EnumStyle;
 }
 
 export type SwaggerFlowConfig = SwaggerLayerConfig;
@@ -44,6 +56,7 @@ export interface CliArgs {
   apiVersion?: string;
   httpClient?: string;
   exclude?: string;
+  enumStyle?: string;
 }
 
 export interface GenerateOptions {
@@ -66,6 +79,10 @@ export interface OpenApiSchema {
   allOf?: OpenApiSchema[];
   oneOf?: OpenApiSchema[];
   anyOf?: OpenApiSchema[];
+  /** Member names for `enum` values (NSwag / .NET convention) */
+  "x-enumNames"?: string[];
+  /** Member names for `enum` values (openapi-generator convention) */
+  "x-enum-varnames"?: string[];
 }
 
 export interface OpenApiParameter {

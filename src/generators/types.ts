@@ -1,6 +1,6 @@
 import { schemaToTsType } from "../parser.js";
 import type { OpenApiSchema, OperationResponseInfo } from "../types.js";
-import { formatPropertyKey, GENERATED_HEADER, toEnumTypeName } from "../utils.js";
+import { formatDocComment, formatPropertyKey, GENERATED_HEADER, toEnumTypeName } from "../utils.js";
 
 const BUILTIN_TYPES = `export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -61,7 +61,7 @@ function renderInterface(
   allSchemas: Record<string, OpenApiSchema>,
   description?: string
 ): string {
-  const doc = description ? `/** ${description} */\n` : "";
+  const doc = formatDocComment(description);
   const requiredSet = new Set(schema?.required || []);
   const props = Object.entries(schema?.properties || {})
     .map(([propName, propSchema]) => {

@@ -216,3 +216,123 @@ test("missing local swagger file produces an error", () => {
     })
   );
 });
+
+const ENUM_FIXTURE = {
+  openapi: "3.0.0",
+  paths: {
+    "/tasks": {
+      post: {
+        tags: ["Task"],
+        operationId: "CreateTask",
+        parameters: [
+          { name: "role", in: "query", schema: { $ref: "#/components/schemas/Role" } },
+        ],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/TaskDto" } } },
+        },
+        responses: {
+          "200": {
+            content: { "application/json": { schema: { $ref: "#/components/schemas/TaskDto" } } },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Role: { type: "string", enum: ["Admin", "Member", "Guest"] },
+      Priority: { type: "integer", enum: [0, 1, 2] },
+      Level: { type: "integer", enum: [1, 5], "x-enumNames": ["Low", "High"] },
+      Weird: {
+        type: "string",
+        description: "Has a */ terminator",
+        enum: ["in-progress", 'say "hi"', "1", "-2"],
+      },
+      TaskDto: {
+        type: "object",
+        properties: {
+          role: { $ref: "#/components/schemas/Role" },
+          priority: { $ref: "#/components/schemas/Priority" },
+          level: { $ref: "#/components/schemas/Level" },
+          weird: { $ref: "#/components/schemas/Weird" },
+        },
+      },
+    },
+  },
+};
+
+const HTTPS_STUB = `import type { ApiErrorResponse, HttpRequestArgs } from "./types";
+export async function get<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Promise<T> { return undefined as unknown as T; }
+export async function post<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Promise<T> { return undefined as unknown as T; }
+export async function put<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Promise<T> { return undefined as unknown as T; }
+export async function patch<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Promise<T> { return undefined as unknown as T; }
+export async function del<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Promise<T> { return undefined as unknown as T; }
+`;
+
+/** Generates ENUM_FIXTURE with the given extra CLI args, type-checks the output and returns enums.ts. */
+function generateEnumFixture(extraArgs: string[]): string {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "swagger-layer-enums-"));
+  try {
+    fs.writeFileSync(path.join(cwd, "swagger.json"), JSON.stringify(ENUM_FIXTURE));
+    execFileSync(process.execPath, [cli, "--file", "swagger.json", "--http-client", "../https", ...extraArgs], {
+      cwd,
+      encoding: "utf8",
+    });
+    fs.writeFileSync(path.join(cwd, "src", "api", "https.ts"), HTTPS_STUB);
+    fs.writeFileSync(
+      path.join(cwd, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          lib: ["ES2022", "DOM"],
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+        },
+        include: ["src/**/*"],
+      })
+    );
+    const tscBin = path.join(pkgRoot, "node_modules", ".bin", "tsc");
+    execFileSync(tscBin, ["-p", path.join(cwd, "tsconfig.json")], { cwd, encoding: "utf8" });
+    return fs.readFileSync(path.join(cwd, "src", "api", "enums.ts"), "utf8");
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+test("enumStyle numeric (default): legacy numbering for string enums, real values for integer enums", () => {
+  const enums = generateEnumFixture([]);
+  assert.match(enums, /export enum ERole \{\n  Admin = 1,\n  Member,\n  Guest,\n\}/);
+  assert.match(enums, /export enum EPriority \{\n  Value0 = 0,\n  Value1 = 1,\n  Value2 = 2,\n\}/);
+  assert.match(enums, /export enum ELevel \{\n  Low = 1,\n  High = 5,\n\}/);
+  assert.match(enums, /\/\*\* Has a \*\\\/ terminator \*\//);
+  assert.match(enums, /export enum EWeird \{\n  "in-progress" = 1,\n  "say \\"hi\\"",\n  Value1,\n  ValueMinus2,\n\}/);
+});
+
+test("enumStyle string: enum members keep their wire values", () => {
+  const enums = generateEnumFixture(["--enum-style", "string"]);
+  assert.match(enums, /export enum ERole \{\n  Admin = "Admin",\n  Member = "Member",\n  Guest = "Guest",\n\}/);
+  assert.match(enums, /export enum ELevel \{\n  Low = 1,\n  High = 5,\n\}/);
+  assert.match(enums, /  "say \\"hi\\"" = "say \\"hi\\"",\n  Value1 = "1",\n  ValueMinus2 = "-2",/);
+});
+
+test("enumStyle union: emits literal union types", () => {
+  const enums = generateEnumFixture(["--enum-style", "union"]);
+  assert.match(enums, /export type ERole = "Admin" \| "Member" \| "Guest";/);
+  assert.match(enums, /export type EPriority = 0 \| 1 \| 2;/);
+  assert.match(enums, /export type EWeird = "in-progress" \| "say \\"hi\\"" \| "1" \| "-2";/);
+});
+
+test("invalid enumStyle is rejected", () => {
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, [cli, "--file", fixture, "--enum-style", "bogus"], {
+        encoding: "utf8",
+        stdio: "pipe",
+      }),
+    /enumStyle must be one of: numeric, string, union/
+  );
+});

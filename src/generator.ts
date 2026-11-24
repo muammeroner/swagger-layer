@@ -92,7 +92,7 @@ function logSummary(
   swaggerUrl: string,
   config: SwaggerLayerConfig
 ): void {
-  console.log(`=== [swagger-layer] Generating TypeScript API Layer ===`);
+  console.log(`Swagger Layer - Generating TypeScript API Layer`);
   console.log(`Config File : ${configPath || "(default)"}`);
   console.log(`Source      : ${swaggerUrl}`);
   console.log(`Export Path : ${config.exportPath}`);
@@ -137,7 +137,7 @@ export async function generateApi(options: GenerateOptions = {}): Promise<Genera
   };
 
   // 1. Shared enums & types
-  writeOut("enums.ts", generateEnums(schemas));
+  writeOut("enums.ts", generateEnums(schemas, config.enumStyle));
   console.log(`✓ Generated ${config.exportPath}/enums.ts`);
 
   writeOut("types.ts", generateTypes(schemas, enums, opResponses));
@@ -168,7 +168,7 @@ export async function generateApi(options: GenerateOptions = {}): Promise<Genera
   // 4. Root barrel
   writeOut("index.ts", generateRootIndex(moduleSlugs));
   console.log(`✓ Generated ${config.exportPath}/index.ts`);
-  console.log(`✓ Swagger Layer - API Generation Complete \n`);
+  console.log(`Swagger Layer - API Generation Complete \n`);
 
   return {
     config,

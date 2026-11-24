@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CliArgs, RawConfigFile, SwaggerLayerConfig } from "./types.js";
+import { ENUM_STYLES } from "./types.js";
+import type { CliArgs, EnumStyle, RawConfigFile, SwaggerLayerConfig } from "./types.js";
 import { isPlainObject } from "./utils.js";
 
 export const DEFAULT_CONFIG: Readonly<SwaggerLayerConfig> = Object.freeze({
@@ -13,6 +14,7 @@ export const DEFAULT_CONFIG: Readonly<SwaggerLayerConfig> = Object.freeze({
   httpClient: "../https",
   swaggerUrlTemplate: "https://api.example.com/swagger/v1/swagger.json",
   defaultName: "app",
+  enumStyle: "numeric",
 });
 
 const CONFIG_FILENAMES = ["config.json"];
@@ -53,6 +55,8 @@ const VALUE_ARGS: Record<string, ValueArg> = {
   httpClient: "httpClient",
   exclude: "exclude",
   e: "exclude",
+  "enum-style": "enumStyle",
+  enumStyle: "enumStyle",
 };
 
 export function parseArgs(argv: string[] = process.argv.slice(2)): CliArgs {
@@ -157,6 +161,9 @@ function validateConfig(config: SwaggerLayerConfig): void {
   assertString(config.baseUrl, "baseUrl");
   assertString(config.version, "version", { nonEmpty: true });
   assertString(config.httpClient, "httpClient", { nonEmpty: true });
+  if (!ENUM_STYLES.includes(config.enumStyle)) {
+    throw new Error(`enumStyle must be one of: ${ENUM_STYLES.join(", ")}`);
+  }
 }
 
 /**
@@ -188,6 +195,7 @@ export function readConfig(
     httpClient: pick("httpClient", args.httpClient),
     swaggerUrlTemplate: pick("swaggerUrlTemplate"),
     defaultName: pick("defaultName"),
+    enumStyle: pick("enumStyle", args.enumStyle as EnumStyle | undefined),
   };
 
   validateConfig(config);
@@ -214,6 +222,7 @@ export function createDefaultConfigFile(root: string, filename = "config.json"):
     version: DEFAULT_CONFIG.version,
     input: DEFAULT_CONFIG.input,
     httpClient: DEFAULT_CONFIG.httpClient,
+    enumStyle: DEFAULT_CONFIG.enumStyle,
     excludedModules: [],
   };
 

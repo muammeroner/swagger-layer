@@ -67,6 +67,36 @@ export function formatPropertyKey(key: string): string {
   return VALID_IDENTIFIER_RE.test(key) ? key : JSON.stringify(key);
 }
 
+/**
+ * True when TypeScript treats `name` as a numeric enum member name, which is not allowed
+ * (TS2452: "An enum member cannot have a numeric name"). Mirrors TS's `isNumericLiteralName`.
+ */
+function isNumericName(name: string): boolean {
+  return String(Number(name)) === name;
+}
+
+/**
+ * Formats an enum member name so it is a valid TypeScript enum member:
+ * identifiers stay as-is, numeric names become `Value1` / `ValueMinus1` / `Value1_5`,
+ * anything else is quoted.
+ */
+export function formatEnumMemberName(name: string): string {
+  if (isNumericName(name)) {
+    return `Value${name.replace(/^-/, "Minus").replace(/[^a-zA-Z0-9]/g, "_")}`;
+  }
+  return formatPropertyKey(name);
+}
+
+/** Single-line JSDoc comment, escaping `*\/` so descriptions cannot terminate it early. */
+export function formatDocComment(text: string | undefined): string {
+  return text ? `/** ${text.replaceAll("*/", "*\\/")} */\n` : "";
+}
+
+/** TypeScript literal for an enum value (`"Admin"`, `1`). */
+export function formatLiteral(value: string | number): string {
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+
 function normalizeModuleName(value: string): string {
   return toKebabCase(value).replace(/[-_]/g, "").toLowerCase();
 }
