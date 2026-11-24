@@ -1,0 +1,56 @@
+{
+  "name": "swagger-layer",
+  "version": "1.0.0",
+  "description": "OpenAPI / Swagger JSON to TypeScript Fetch API, Repository, Service, Types, Interfaces & Enums generator for React projects",
+  "type": "module",
+  "bin": {
+    "swagger-layer": "dist/bin/swagger-layer.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin/swagger-layer.js",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/swagger-layer.test.ts",
+    "prepublishOnly": "npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muammeroner/swagger-layer.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "swagger",
+    "openapi",
+    "typescript",
+    "react",
+    "fetch",
+    "codegen",
+    "api-generator",
+    "repository",
+    "service",
+    "swagger-layer"
+  ],
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
