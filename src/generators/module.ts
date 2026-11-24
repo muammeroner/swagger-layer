@@ -87,6 +87,52 @@ function buildMethodSignature(m: ParsedMethod): {
   return { paramsList, argNames };
 }
 
+function extractRawExpression(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("${") || !trimmed.endsWith("}")) {
+    return undefined;
+  }
+
+  let depth = 0;
+  let quote: '"' | "'" | "`" | null = null;
+  let escaped = false;
+
+  for (let i = 1; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        if (i !== trimmed.length - 1) {
+          return undefined;
+        }
+        const expr = trimmed.slice(2, -1).trim();
+        return expr.length > 0 ? expr : undefined;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function formatBaseUrlValue(baseUrl: string): string {
+  return extractRawExpression(baseUrl) ?? JSON.stringify(baseUrl);
+}
+
 export function generateModuleApi(
   methods: ParsedMethod[],
   enums: Set<string>,
@@ -101,7 +147,7 @@ export function generateModuleApi(
   code += renderSharedTypeImports(sortedEnums, sortedTypes);
   code += `import { ${httpMethodsUsed.join(", ")} } from ${JSON.stringify(httpImportPath)};\n\n`;
 
-  code += `const DEFAULT_API_URL = ${JSON.stringify(config.baseUrl)};\n`;
+  code += `const DEFAULT_API_URL = ${formatBaseUrlValue(config.baseUrl)};\n`;
   code += `const DEFAULT_API_VERSION = ${JSON.stringify(config.version)};\n\n`;
 
   for (const m of methods) {

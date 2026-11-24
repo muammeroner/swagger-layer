@@ -1,5 +1,5 @@
 export interface SwaggerLayerConfig {
-  /** Base URL for API calls (e.g. "https://api.example.com") */
+  /** Base URL for API calls (e.g. "https://api.example.com" or "${process.env.NEXT_PUBLIC_DEFAULT_API_URL}") */
   baseUrl: string;
   /** Prefix for generated Repository and Service classes (e.g. "App", "Rg") */
   prefix: string;

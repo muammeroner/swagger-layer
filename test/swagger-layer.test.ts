@@ -94,6 +94,7 @@ test("generates enums, types, api.ts, repository.ts, and service.ts using config
 
     const apiContent = fs.readFileSync(path.join(generated, "user/api.ts"), "utf8");
     assert.match(apiContent, /from "@\/lib\/api\/https"/);
+    assert.match(apiContent, /const DEFAULT_API_URL = "https:\/\/api\.acme\.dev";/);
     assert.match(apiContent, /"2\.0"/);
     assert.match(apiContent, /export async function getUsers\(query\?: \{ page\?: number; role\?: "Admin" \| "Member" \| "Guest" \}\)/);
     assert.match(apiContent, /export async function createUser/);
@@ -143,6 +144,60 @@ export async function del<T, E = ApiErrorResponse>(_args: HttpRequestArgs): Prom
     execFileSync(tscBin, ["-p", testTsconfigPath], { cwd, encoding: "utf8" });
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("emits unquoted DEFAULT_API_URL expression when baseUrl is wrapped in ${...}", () => {
+  const cases: Array<{ baseUrl: string; expectedLine: string }> = [
+    {
+      baseUrl: "${process.env.NEXT_PUBLIC_DEFAULT_API_URL}",
+      expectedLine: "const DEFAULT_API_URL = process.env.NEXT_PUBLIC_DEFAULT_API_URL;",
+    },
+    {
+      baseUrl: "${value}",
+      expectedLine: "const DEFAULT_API_URL = value;",
+    },
+    {
+      baseUrl: "${ process.env.API_URL ?? \"https://fallback.example.com\" }",
+      expectedLine: "const DEFAULT_API_URL = process.env.API_URL ?? \"https://fallback.example.com\";",
+    },
+    {
+      baseUrl: "${}",
+      expectedLine: "const DEFAULT_API_URL = \"${}\";",
+    },
+    {
+      baseUrl: "${a}/${b}",
+      expectedLine: "const DEFAULT_API_URL = \"${a}/${b}\";",
+    },
+  ];
+
+  for (const { baseUrl, expectedLine } of cases) {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "swagger-layer-baseurl-"));
+    try {
+      fs.writeFileSync(
+        path.join(cwd, "config.json"),
+        JSON.stringify({
+          swaggerLayer: {
+            baseUrl,
+            prefix: "App",
+            exportPath: "src/api",
+            version: "1.0",
+            httpClient: "../https",
+            excludedModules: [],
+          },
+        })
+      );
+
+      execFileSync(process.execPath, [cli, "--file", fixture], { cwd, encoding: "utf8" });
+
+      const apiContent = fs.readFileSync(path.join(cwd, "src", "api", "user", "api.ts"), "utf8");
+      assert.ok(
+        apiContent.includes(expectedLine),
+        `Expected api.ts for baseUrl=${baseUrl} to contain:\n${expectedLine}\nActual:\n${apiContent}`
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   }
 });
 

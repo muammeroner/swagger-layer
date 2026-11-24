@@ -102,8 +102,8 @@ When `swagger-layer` runs, it reads the `"swaggerLayer"` object from `config.jso
 
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **`baseUrl`** | `string` | `"https://api.example.com"` | Base server URL used for outgoing API requests. |
-| **`prefix`** | `string` | `"App"` | Prefix added to generated `Repository` and `Service` class names (e.g. `"Rg"` $\rightarrow$ `RgUserService`, `RgUserRepository`). Can be empty (`""`). |
+| **`baseUrl`** | `string` | `"https://api.example.com"` | Base server URL used for outgoing API requests. Wrap in `"${...}"` (e.g. `"${process.env.NEXT_PUBLIC_DEFAULT_API_URL}"`) to emit an unquoted expression in generated `api.ts` files. |
+| **`prefix`** | `string` | `"App"` | Prefix added to generated `Repository` and `Service` class names (e.g. `"App"` $\rightarrow$ `AppUserService`, `AppUserRepository`). Can be empty (`""`). |
 | **`exportPath`** | `string` | `"src/api"` | Target directory where all generated TypeScript files are written. |
 | **`version`** | `string` | `"1.0"` | Default API version sent in the `api-version` HTTP header on every request. |
 | **`input`** | `string` | `"./swagger.json"` | Local file path (`./swagger.json`) **or** remote URL (`https://.../swagger.json`) of the OpenAPI/Swagger JSON document. |
