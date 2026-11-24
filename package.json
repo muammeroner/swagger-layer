@@ -1,6 +1,6 @@
 {
   "name": "swagger-layer",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "OpenAPI / Swagger JSON to TypeScript Fetch API, Repository, Service, Types, Interfaces & Enums generator for React projects",
   "type": "module",
   "bin": {

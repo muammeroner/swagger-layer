@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import type {
   OpenApiDocument,
+  OpenApiMediaType,
   OpenApiOperation,
   OpenApiParameter,
+  OpenApiResponse,
   OpenApiSchema,
   OperationResponseInfo,
   ParsedMethod,
@@ -14,14 +16,29 @@ import {
   cleanOperationId,
   formatPropertyKey,
   isModuleExcluded,
+  refToTypeName,
   resolveRef,
   toCamelCase,
+  toEnumTypeName,
   toKebabCase,
   toPascalCase,
 } from "./utils.js";
 
 const SUPPORTED_HTTP_VERBS = new Set(["get", "post", "put", "delete", "patch"]);
 const SUCCESS_STATUS_CODES = ["200", "201", "202", "204"] as const;
+const REQUEST_BODY_MEDIA_TYPES = [
+  "application/json",
+  "multipart/form-data",
+  "application/x-www-form-urlencoded",
+];
+const RESPONSE_MEDIA_TYPES = ["application/json"];
+
+/** Shared state used while parsing a single operation. */
+interface ParseContext {
+  enums: Set<string>;
+  allSchemas: Record<string, OpenApiSchema>;
+  usedInterfaces: Set<string>;
+}
 
 export async function loadSwagger(
   swaggerUrl: string,
@@ -59,6 +76,11 @@ function formatEnumUnion(values: (string | number)[]): string {
   return values.map((v) => (typeof v === "string" ? `"${v}"` : String(v))).join(" | ");
 }
 
+/** Wraps compound types in parentheses so they can be suffixed with `[]`. */
+function toArrayType(itemType: string): string {
+  return /[ |&]/.test(itemType) ? `(${itemType})[]` : `${itemType}[]`;
+}
+
 export function schemaToTsType(
   schema: OpenApiSchema | undefined,
   enums: Set<string>,
@@ -67,41 +89,41 @@ export function schemaToTsType(
 ): string {
   if (!schema) return "unknown";
 
+  const recurse = (s: OpenApiSchema | undefined): string =>
+    schemaToTsType(s, enums, allSchemas, forQuery);
+
   if (schema.$ref) {
     const name = resolveRef(schema.$ref);
-    if (enums.has(name)) {
-      if (forQuery && Array.isArray(allSchemas[name]?.enum)) {
-        return formatEnumUnion(allSchemas[name].enum!);
-      }
-      return `E${name}`;
-    }
-    return name;
+    if (!enums.has(name)) return name;
+    const enumValues = allSchemas[name]?.enum;
+    return forQuery && Array.isArray(enumValues)
+      ? formatEnumUnion(enumValues)
+      : toEnumTypeName(name);
   }
 
   if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    return schema.allOf.map((s) => schemaToTsType(s, enums, allSchemas, forQuery)).join(" & ");
+    return schema.allOf.map(recurse).join(" & ");
   }
 
   const unionList = schema.oneOf || schema.anyOf;
   if (Array.isArray(unionList) && unionList.length > 0) {
-    return unionList.map((s) => schemaToTsType(s, enums, allSchemas, forQuery)).join(" | ");
+    return unionList.map(recurse).join(" | ");
   }
 
   if (schema.enum && schema.enum.length > 0) {
     return formatEnumUnion(schema.enum);
   }
 
-  if (schema.type === "string") {
-    return schema.format === "binary" ? "Blob" : "string";
-  }
-  if (schema.type === "integer" || schema.type === "number") return "number";
-  if (schema.type === "boolean") return "boolean";
-
-  if (schema.type === "array") {
-    const itemType = schemaToTsType(schema.items, enums, allSchemas, forQuery);
-    return itemType.includes(" ") || itemType.includes("|") || itemType.includes("&")
-      ? `(${itemType})[]`
-      : `${itemType}[]`;
+  switch (schema.type) {
+    case "string":
+      return schema.format === "binary" ? "Blob" : "string";
+    case "integer":
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "array":
+      return toArrayType(recurse(schema.items));
   }
 
   if (schema.type === "object" || schema.properties || schema.additionalProperties) {
@@ -109,13 +131,12 @@ export function schemaToTsType(
       const reqSet = new Set(schema.required || []);
       const props = Object.entries(schema.properties).map(([k, v]) => {
         const opt = reqSet.has(k) ? "" : "?";
-        return `${formatPropertyKey(k)}${opt}: ${schemaToTsType(v, enums, allSchemas, forQuery)}`;
+        return `${formatPropertyKey(k)}${opt}: ${recurse(v)}`;
       });
       return `{ ${props.join("; ")} }`;
     }
     if (typeof schema.additionalProperties === "object") {
-      const valType = schemaToTsType(schema.additionalProperties, enums, allSchemas, forQuery);
-      return `Record<string, ${valType}>`;
+      return `Record<string, ${recurse(schema.additionalProperties)}>`;
     }
     return "Record<string, unknown>";
   }
@@ -133,82 +154,78 @@ function collectSchemaRefs(
     const refName = resolveRef(schema.$ref);
     if (!enums.has(refName)) target.add(refName);
   }
-  if (schema.items) collectSchemaRefs(schema.items, enums, target);
-  if (schema.properties) {
-    for (const prop of Object.values(schema.properties)) {
-      collectSchemaRefs(prop, enums, target);
-    }
+
+  const children: Array<OpenApiSchema | undefined> = [
+    schema.items,
+    ...Object.values(schema.properties || {}),
+    typeof schema.additionalProperties === "object" ? schema.additionalProperties : undefined,
+    ...(schema.allOf || []),
+    ...(schema.oneOf || []),
+    ...(schema.anyOf || []),
+  ];
+  for (const child of children) {
+    collectSchemaRefs(child, enums, target);
   }
-  if (typeof schema.additionalProperties === "object") {
-    collectSchemaRefs(schema.additionalProperties, enums, target);
-  }
-  for (const list of [schema.allOf, schema.oneOf, schema.anyOf]) {
-    if (Array.isArray(list)) {
-      list.forEach((s) => collectSchemaRefs(s, enums, target));
-    }
-  }
+}
+
+/** Picks the schema of the first preferred media type, falling back to the first entry. */
+function pickMediaSchema(
+  content: Record<string, OpenApiMediaType> | undefined,
+  preferredTypes: string[]
+): OpenApiSchema | undefined {
+  if (!content) return undefined;
+  const preferred = preferredTypes.map((t) => content[t]).find(Boolean);
+  return (preferred || Object.values(content)[0])?.schema;
+}
+
+/** Iterates params of the given location, skipping duplicates by name. */
+function uniqueParams(
+  params: OpenApiParameter[],
+  location: string,
+  skip: (p: OpenApiParameter) => boolean = () => false
+): OpenApiParameter[] {
+  const seen = new Set<string>();
+  return params.filter((p) => {
+    if (p.in !== location || skip(p) || seen.has(p.name)) return false;
+    seen.add(p.name);
+    return true;
+  });
 }
 
 function parsePathParams(params: OpenApiParameter[]): PathParamField[] {
-  const pathParams: PathParamField[] = [];
-  const seen = new Set<string>();
-
-  for (const p of params) {
-    if (p.in !== "path" || seen.has(p.name)) continue;
-    seen.add(p.name);
+  return uniqueParams(params, "path").map((p) => {
     const paramType = p.schema?.type ?? p.type;
-    pathParams.push({
+    return {
       name: toCamelCase(p.name),
       rawName: p.name,
       type: paramType === "integer" || paramType === "number" ? "number" : "string",
-    });
-  }
-
-  return pathParams;
+    };
+  });
 }
 
-function parseQueryParams(
-  params: OpenApiParameter[],
-  enums: Set<string>,
-  allSchemas: Record<string, OpenApiSchema>,
-  usedInterfaces: Set<string>
-): QueryParamField[] {
-  const queryParams: QueryParamField[] = [];
-  const seen = new Set<string>();
-
-  for (const q of params) {
-    if (q.in !== "query" || q.name === "api-version" || seen.has(q.name)) continue;
-    seen.add(q.name);
+function parseQueryParams(params: OpenApiParameter[], ctx: ParseContext): QueryParamField[] {
+  return uniqueParams(params, "query", (q) => q.name === "api-version").map((q) => {
     const qSchema = q.schema || { type: q.type, enum: q.enum, items: q.items };
-    queryParams.push({
+    collectSchemaRefs(qSchema, ctx.enums, ctx.usedInterfaces);
+    return {
       name: toCamelCase(q.name),
       rawName: q.name,
-      type: schemaToTsType(qSchema, enums, allSchemas, true),
+      type: schemaToTsType(qSchema, ctx.enums, ctx.allSchemas, true),
       required: q.required,
-    });
-    collectSchemaRefs(qSchema, enums, usedInterfaces);
-  }
-
-  return queryParams;
+    };
+  });
 }
 
 function parseRequestBody(
   op: OpenApiOperation,
   params: OpenApiParameter[],
-  enums: Set<string>,
-  allSchemas: Record<string, OpenApiSchema>,
-  usedInterfaces: Set<string>
+  ctx: ParseContext
 ): { bodyType?: string; isBodyRequired: boolean } {
   let isBodyRequired = Boolean(op.requestBody?.required);
-  const content = op.requestBody?.content || {};
-  const bodyMedia =
-    content["application/json"] ||
-    content["multipart/form-data"] ||
-    content["application/x-www-form-urlencoded"] ||
-    Object.values(content)[0];
-  let reqBodySchema = bodyMedia?.schema;
+  let reqBodySchema = pickMediaSchema(op.requestBody?.content || {}, REQUEST_BODY_MEDIA_TYPES);
 
   if (!reqBodySchema) {
+    // Swagger 2.0: body is declared as an `in: body` parameter
     const swagger2BodyParam = params.find((p) => p.in === "body");
     if (swagger2BodyParam?.schema) {
       reqBodySchema = swagger2BodyParam.schema;
@@ -220,82 +237,77 @@ function parseRequestBody(
     return { bodyType: undefined, isBodyRequired };
   }
 
-  collectSchemaRefs(reqBodySchema, enums, usedInterfaces);
+  collectSchemaRefs(reqBodySchema, ctx.enums, ctx.usedInterfaces);
 
-  let bodyType: string;
   if (reqBodySchema.$ref) {
-    const refName = resolveRef(reqBodySchema.$ref);
-    bodyType = enums.has(refName) ? `E${refName}` : refName;
-  } else {
-    bodyType = schemaToTsType(reqBodySchema, enums, allSchemas);
-    if (bodyType === "unknown") {
-      bodyType = "string";
-    }
+    return { bodyType: refToTypeName(resolveRef(reqBodySchema.$ref), ctx.enums), isBodyRequired };
   }
 
-  return { bodyType, isBodyRequired };
+  const inlineType = schemaToTsType(reqBodySchema, ctx.enums, ctx.allSchemas);
+  return { bodyType: inlineType === "unknown" ? "string" : inlineType, isBodyRequired };
+}
+
+function findSuccessSchema(
+  responses: Record<string, OpenApiResponse>
+): OpenApiSchema | undefined {
+  for (const code of SUCCESS_STATUS_CODES) {
+    const respObj = responses[code];
+    if (!respObj) continue;
+    const schema = respObj.content
+      ? pickMediaSchema(respObj.content, RESPONSE_MEDIA_TYPES)
+      : respObj.schema;
+    if (schema) return schema;
+  }
+  return undefined;
 }
 
 function parseResponseType(
   op: OpenApiOperation,
   httpVerb: string,
   cleanOp: string,
-  enums: Set<string>,
-  allSchemas: Record<string, OpenApiSchema>,
-  usedInterfaces: Set<string>,
+  ctx: ParseContext,
   opResponses: Map<string, OperationResponseInfo>
 ): string {
-  const resps = op.responses || {};
-  let successSchema: OpenApiSchema | undefined;
-
-  for (const code of SUCCESS_STATUS_CODES) {
-    const respObj = resps[code];
-    if (!respObj) continue;
-    if (respObj.content) {
-      const media = respObj.content["application/json"] || Object.values(respObj.content)[0];
-      if (media?.schema) {
-        successSchema = media.schema;
-        break;
-      }
-    } else if (respObj.schema) {
-      successSchema = respObj.schema;
-      break;
-    }
-  }
+  const { enums, allSchemas, usedInterfaces } = ctx;
+  const successSchema = findSuccessSchema(op.responses || {});
 
   if (!successSchema) {
     return httpVerb === "post" ? "string" : "void";
   }
 
-  if (successSchema.type === "array") {
-    if (successSchema.items?.$ref) {
-      const itemRef = resolveRef(successSchema.items.$ref);
-      if (!enums.has(itemRef)) usedInterfaces.add(itemRef);
-      return enums.has(itemRef) ? `E${itemRef}[]` : `${itemRef}[]`;
+  switch (successSchema.type) {
+    case "array": {
+      if (successSchema.items?.$ref) {
+        const itemRef = resolveRef(successSchema.items.$ref);
+        if (!enums.has(itemRef)) usedInterfaces.add(itemRef);
+        return `${refToTypeName(itemRef, enums)}[]`;
+      }
+      return `${schemaToTsType(successSchema.items, enums, allSchemas)}[]`;
     }
-    return `${schemaToTsType(successSchema.items, enums, allSchemas)}[]`;
+    case "string":
+      return "string";
+    case "boolean":
+      return "boolean";
+    case "integer":
+    case "number":
+      return "number";
   }
 
-  if (successSchema.type === "string") return "string";
-  if (successSchema.type === "boolean") return "boolean";
-  if (successSchema.type === "integer" || successSchema.type === "number") return "number";
-
-  if (successSchema.$ref) {
-    const refName = resolveRef(successSchema.$ref);
-    if (allSchemas[refName] && !allSchemas[refName].enum) {
-      usedInterfaces.add(refName);
-      return refName;
-    }
-    const respName = `${cleanOp}Response`;
-    usedInterfaces.add(respName);
-    opResponses.set(respName, { schema: successSchema, refName });
-    return respName;
+  const refName = successSchema.$ref ? resolveRef(successSchema.$ref) : undefined;
+  if (refName && allSchemas[refName] && !allSchemas[refName].enum) {
+    usedInterfaces.add(refName);
+    return refName;
   }
 
+  // Inline (or unresolvable) response schema: emit a dedicated `<Operation>Response` interface
   const respName = `${cleanOp}Response`;
   usedInterfaces.add(respName);
-  opResponses.set(respName, { schema: successSchema });
+  opResponses.set(respName, refName ? { schema: successSchema, refName } : { schema: successSchema });
   return respName;
+}
+
+function toHttpMethod(httpVerb: string): ParsedMethod["httpMethod"] {
+  return httpVerb === "delete" ? "del" : (httpVerb as ParsedMethod["httpMethod"]);
 }
 
 export function parseOperations(
@@ -336,49 +348,32 @@ export function parseOperations(
 
       const opId = op.operationId || `${httpVerb}${toPascalCase(pathKey)}`;
       const cleanOp = toPascalCase(cleanOperationId(opId));
-      const fnName = toCamelCase(cleanOp);
-      const httpMethod: ParsedMethod["httpMethod"] =
-        httpVerb === "delete" ? "del" : (httpVerb as "get" | "post" | "put" | "patch");
-
       const combinedParams: OpenApiParameter[] = [...pathLevelParams, ...(op.parameters || [])];
-      const usedInterfaces = new Set<string>();
-      const usedTypes = new Set<string>(["ApiErrorResponse"]);
+      const ctx: ParseContext = { enums, allSchemas, usedInterfaces: new Set<string>() };
 
       const pathParams = parsePathParams(combinedParams);
-      const queryParamFields = parseQueryParams(combinedParams, enums, allSchemas, usedInterfaces);
-      const { bodyType, isBodyRequired } = parseRequestBody(
-        op,
-        combinedParams,
-        enums,
-        allSchemas,
-        usedInterfaces
-      );
-      const returnType = parseResponseType(
-        op,
-        httpVerb,
-        cleanOp,
-        enums,
-        allSchemas,
-        usedInterfaces,
-        opResponses
-      );
+      const queryParamFields = parseQueryParams(combinedParams, ctx);
+      const { bodyType, isBodyRequired } = parseRequestBody(op, combinedParams, ctx);
+      const returnType = parseResponseType(op, httpVerb, cleanOp, ctx, opResponses);
 
-      if (!modules.has(moduleSlug)) {
-        modules.set(moduleSlug, { tag: rawTag, moduleSlug, methods: [] });
+      let module = modules.get(moduleSlug);
+      if (!module) {
+        module = { tag: rawTag, moduleSlug, methods: [] };
+        modules.set(moduleSlug, module);
       }
 
-      modules.get(moduleSlug)!.methods.push({
-        fnName,
+      module.methods.push({
+        fnName: toCamelCase(cleanOp),
         summary: op.summary || op.description,
-        httpMethod,
+        httpMethod: toHttpMethod(httpVerb),
         path: pathKey,
         pathParams,
         bodyType,
         isBodyRequired,
         queryParamFields,
         returnType,
-        usedInterfaces,
-        usedTypes,
+        usedInterfaces: ctx.usedInterfaces,
+        usedTypes: new Set<string>(["ApiErrorResponse"]),
       });
     }
   }
